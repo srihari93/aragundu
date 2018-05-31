@@ -32,6 +32,10 @@ const RES_unknown = 'req unknown to aragundu';
 const RES_hi = 'chittam maha prabhu';
 // araGunduResponses
 
+// miscConsts
+const rcPath = 'rcPath=';
+// miscConsts
+
 // globalVars
 const clients = [];
 const CDPInstances = [];
@@ -118,6 +122,11 @@ const pesarattuHandler = async (socket) => {
     clients.splice(clientIndx, 1);
   });
 };
+
+const configPath = process.argv
+  .find((arg) => arg.startsWith(rcPath))
+  .substring(rcPath.length);
+const config = require(configPath);
 
 const commandReceiver = net.createServer(pesarattuHandler);
 
