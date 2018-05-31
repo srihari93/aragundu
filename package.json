@@ -1,0 +1,8 @@
+{
+  "name": "aragundu",
+  "version": "0.0.1",
+  "description": "serves pesarattu. Pesarattu is a node debugger plugin for vim and uses aragundu to communicate with chrome devtools protocol enabled debuggers.",
+  "main": "aragundu.js",
+  "author": "Sri Hari Raju Penmatsa <pshraju@gmail.com>",
+  "license": "MIT"
+}
