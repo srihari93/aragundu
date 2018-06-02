@@ -1,9 +1,11 @@
-const net = require('net');
-const CDP = require('chrome-remote-interface');
+const { createServer } = require('net');
+const { EOL } = require('os');
 const { spawn } = require('child_process');
-const _ = require('lodash');
-const path = require('path');
+const { curry } = require('lodash');
+const { parse } = require('path');
 const { promisify } = require('util');
+const { openSync, createWriteStream } = require('fs');
+const CDP = require('chrome-remote-interface');
 
 // utilFunctions
 const { log: debug } = console;
@@ -36,6 +38,7 @@ const keepTrying = promisify((promiseGetter, cb) => {
 
 // miscConsts
 const CONST_rcPath = 'rcPath=';
+const CONST_logPath = 'logPath=';
 const CONST_port = 'port=';
 const CONST_defPort = 8080;
 const CONST_nodeInspect = 'node-inspect';
@@ -44,7 +47,7 @@ const CONST_inspectBrk = '--inspect-brk';
 const CONST_inspectPort = 9229;
 const CONST_inspectAddr = 'localhost';
 const CONST_node = 'node';
-const CONST_fsRoot = path.parse(process.cwd()).root;
+const CONST_fsRoot = parse(process.cwd()).root;
 // miscConsts
 
 // exposedCommands
@@ -78,6 +81,9 @@ const scriptMappings = {};
 const configPath = (
   process.argv.find((arg) => arg.startsWith(CONST_rcPath)) || ''
 ).substring(CONST_rcPath.length);
+const logPath = (
+  process.argv.find((arg) => arg.startsWith(CONST_logPath)) || ''
+).substring(CONST_logPath.length);
 const port =
   (process.argv.find((arg) => arg.startsWith(CONST_port)) || '').substring(
     CONST_port.length
@@ -90,6 +96,23 @@ try {
 }
 const debugging = {};
 // globalVars
+
+try {
+  const fd = openSync(logPath, 'w');
+  const ops = createWriteStream(null, { fd });
+  const message = ' The logs for, aragundu, the server of pesrattu' + EOL;
+  process.stdout.write = process.stderr.write = ops.write.bind(ops);
+  debug(
+    '#'.repeat(message.length) +
+      EOL +
+      message +
+      '#'.repeat(message.length) +
+      EOL +
+      EOL
+  );
+} catch (e) {
+  debug('failed to create a log stream with err: ', e);
+}
 
 // sendMsgsResps
 const genericMessage = async (soc, msg) => {
@@ -121,11 +144,10 @@ const nodeProcessEnded = (soc, instance, signal) => {
   );
 };
 const processNotStarted = (soc, instance, err) => {
-  soc,
-    genericMessage(
-      soc,
-      'aragundu failed to start node process for the instance, ' + instance
-    );
+  genericMessage(
+    soc,
+    'aragundu failed to start node process for the instance, ' + instance
+  );
   genericMessage(
     soc,
     'The instance, ' +
@@ -158,7 +180,7 @@ const setBP = async (data) => {
   if (setBPErr) {
     return errHndlr(setBPErr);
   }
-  bp.locations = bp.locations.map(_.curry(addUrlToLocation)(instance));
+  bp.locations = bp.locations.map(curry(addUrlToLocation)(instance));
   debug('bp @ setBP', JSON.stringify(bp, null, 2));
   return Object.assign({ status: ST_success }, bp);
 };
@@ -174,11 +196,34 @@ const startDebug = async (soc, data) => {
 
   if (options.type === CONST_nodeInspect) {
     const args = options.command.substring(CONST_node.length + 1).split(' ');
-    const spawnArgs = [CONST_node, args, { cwd: CONST_fsRoot }];
+    const instanceLog = logPath + data.instance;
+    let stdio;
+    try {
+      // accessSync(instanceLog, CONST_fs.R_OK | CONST_fs.W_OK);
+      // await on(promisify(rename)(instanceLog, instanceLog + 'prev'));
+      const fd = openSync(instanceLog, 'w');
+      const ops = createWriteStream(null, { fd });
+      const message =
+        ' aragundu, the server of Pesrattu is loggin the instance ' +
+        data.instance +
+        EOL;
+      ops.write(
+        '#'.repeat(message.length) +
+          EOL +
+          message +
+          '#'.repeat(message.length) +
+          EOL +
+          EOL
+      );
+      stdio = ['pipe', ops, ops];
+    } catch (e) {
+      // do nothing and the default stdio will be configged
+    }
+    const spawnArgs = [CONST_node, args, { cwd: CONST_fsRoot, stdio }];
 
     const process = spawn(...spawnArgs);
-    process.on('close', _.curry(nodeProcessEnded)(soc, data.instance));
-    process.on('error', _.curry(processNotStarted)(soc, data.instance));
+    process.on('close', curry(nodeProcessEnded)(soc, data.instance));
+    process.on('error', curry(processNotStarted)(soc, data.instance));
 
     const inspectArg =
       // check first for inspect-brk flag and then for inspect flag else pass empty string
@@ -282,7 +327,7 @@ const pesarattuHandler = async (socket) => {
     if (command === CONST_newInstance) {
       commandHandler = newCDPInstance;
     } else if (command === CONST_startDebug) {
-      commandHandler = _.curry(startDebug)(socket);
+      commandHandler = curry(startDebug)(socket);
     } else if (command === CONST_populateBreakpoints) {
       commandHandler = sendBreakpoints;
     } else if (command === CONST_setBP) {
@@ -318,10 +363,10 @@ const pesarattuHandler = async (socket) => {
   });
 };
 
-const commandReceiver = net.createServer(pesarattuHandler);
+const commandReceiver = createServer(pesarattuHandler);
 try {
   commandReceiver.listen(port);
-  debug('port @ socket', port);
+  debug('port openned at ', port);
 } catch (e) {
-  debug('aragundu: failed to start a listening socket at ', port, '\nErr:', e);
+  debug('failed to start a listening socket at ', port, '\nErr:', e);
 }
