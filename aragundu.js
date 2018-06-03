@@ -1,7 +1,7 @@
 const { createServer } = require('net');
 const { EOL } = require('os');
 const { spawn } = require('child_process');
-const { curry } = require('lodash');
+const { curry, find: _find } = require('lodash');
 const { parse } = require('path');
 const { promisify } = require('util');
 const { openSync, createWriteStream } = require('fs');
@@ -55,6 +55,7 @@ const CONST_newInstance = 'new instance';
 const CONST_populateBreakpoints = 'populate breakpoints';
 const CONST_startDebug = 'debug';
 const CONST_setBP = 'setBP';
+const CONST_removeBP = 'removeBP';
 // exposedCommands
 
 // statusResponses
@@ -180,12 +181,45 @@ const setBP = async (data) => {
   if (setBPErr) {
     return errHndlr(setBPErr);
   }
-  bp.locations = bp.locations.map(curry(addUrlToLocation)(instance));
   debug('bp @ setBP', JSON.stringify(bp, null, 2));
-  if (!breakpoints[instance]) {
-    breakpoints[instance] = {};
+  bp.locations = getLocationsWithUrls(instance, bp.locations);
+  rememberBP(instance, bp);
+  return Object.assign({ status: ST_success }, bp);
+};
+
+const getBPByLoc = (instance, loc) => {
+  return _find(breakpoints[instance], (b) =>
+    b.locations.some(
+      (l) => l.lineNumber === loc.lineNumber && l.url === loc.url
+    )
+  );
+};
+
+const getLocationsWithUrls = (instance, locations) =>
+  locations.map(curry(addUrlToLocation)(instance));
+
+const forgetBPById = (instance, bpId) => delete breakpoints[instance][bpId];
+
+const rememberBP = (instance, bp) =>
+  (breakpoints[instance][bp.breakpointId] = bp);
+
+const removeBP = async (data) => {
+  const instance = data.instance;
+  delete data.instance;
+  if (!CDPInstances || !CDPInstances[instance]) {
+    return errHndlr('instance not active');
   }
-  breakpoints[instance][bp.breakpointId] = bp;
+  const client = CDPInstances[instance];
+  const bp = getBPByLoc(instance, data);
+  const breakpointId = bp.breakpointId;
+  const [removeBPErr] = await on(
+    client.Debugger.removeBreakpoint({ breakpointId })
+  );
+  if (removeBPErr) {
+    return errHndlr(removeBPErr);
+  }
+  debug('breakpointId @ removeBP', breakpointId);
+  forgetBPById(instance, breakpointId);
   return Object.assign({ status: ST_success }, bp);
 };
 
@@ -228,19 +262,21 @@ const addSocketToInstance = (soc, ins) => {
 };
 
 const startDebug = async (soc, data) => {
+  const instance = data.instance;
+
   // if the instance is already being debugged, send an ack directly
-  if (CDPInstances && CDPInstances[data.instance]) {
-    addSocketToInstance(soc, data.instance);
-    return { status: ST_success, instance: data.instance };
+  if (CDPInstances && CDPInstances[instance]) {
+    addSocketToInstance(soc, instance);
+    return { status: ST_success, instance: instance };
   }
 
-  const options = config.instances[data.instance];
+  const options = config.instances[instance];
   const CDPOptions = {};
 
   if (options.type === CONST_nodeInspect) {
     const args = options.command.substring(CONST_node.length + 1).split(' ');
 
-    const instanceLog = logPath + data.instance;
+    const instanceLog = logPath + instance;
     let stdio;
     try {
       // accessSync(instanceLog, CONST_fs.R_OK | CONST_fs.W_OK);
@@ -249,7 +285,7 @@ const startDebug = async (soc, data) => {
       const ops = createWriteStream(null, { fd });
       const message =
         ' aragundu, the server of Pesrattu is loggin the instance ' +
-        data.instance +
+        instance +
         EOL;
       ops.write(
         '#'.repeat(message.length) +
@@ -266,8 +302,8 @@ const startDebug = async (soc, data) => {
 
     const spawnArgs = [CONST_node, args, { cwd: CONST_fsRoot, stdio }];
     const process = spawn(...spawnArgs);
-    process.on('close', curry(nodeProcessEnded)(soc, data.instance));
-    process.on('error', curry(processNotStarted)(soc, data.instance));
+    process.on('close', curry(nodeProcessEnded)(soc, instance));
+    process.on('error', curry(processNotStarted)(soc, instance));
 
     const inspectArg =
       // check first for inspect-brk flag and then for inspect flag else pass empty string
@@ -287,7 +323,7 @@ const startDebug = async (soc, data) => {
           ? inspectArg.split(':')[0] // get <host> from <host>:<port>
           : CONST_inspectAddr // inspect options if of <port> only. useless.
         : CONST_inspectAddr; // no inspect options, go for default
-    debugging[data.instance] = {
+    debugging[instance] = {
       process,
       type: options.type
     };
@@ -295,44 +331,35 @@ const startDebug = async (soc, data) => {
     genericMessage(
       soc,
       'The instance ' +
-        data.instance +
+        instance +
         ' was spawned with these param: ' +
         JSON.stringify(spawnArgs)
     );
   }
   // let counter = 1;
-  const [cdpErr, client] = await on(
-    keepTrying(() => {
-      // genericMessage(
-      //   soc,
-      //   'The CDP is trying to connect the instance ' +
-      //     data.instance +
-      //     ' for ' +
-      //     counter++ +
-      //     ' time'
-      // );
-      return CDP(CDPOptions);
-    })
-  );
+  const [cdpErr, client] = await on(keepTrying(() => CDP(CDPOptions)));
   if (cdpErr) {
     return errHndlr(cdpErr);
   }
   debug('client.webSocketUrl @ newCDPInstance', client.webSocketUrl);
 
   // collect all sID to url mappings for future use
-  scriptMappings[data.instance] = {};
+  scriptMappings[instance] = {};
   client.on('Debugger.scriptParsed', (p) => {
-    scriptMappings[data.instance][p.scriptId] = p.url;
+    scriptMappings[instance][p.scriptId] = p.url;
   });
 
   const [enDebugErr] = await on(client.Debugger.enable());
-  client.on('Debugger.paused', curry(paused)(data.instance));
+  client.on('Debugger.paused', curry(paused)(instance));
   if (enDebugErr) {
     return errHndlr(enDebugErr);
   }
-  CDPInstances[data.instance] = client;
-  addSocketToInstance(soc, data.instance);
-  return { status: ST_success, instance: data.instance };
+  CDPInstances[instance] = client;
+  addSocketToInstance(soc, instance);
+  if (!breakpoints[instance]) {
+    breakpoints[instance] = {};
+  }
+  return { status: ST_success, instance: instance };
 };
 
 const getSocketRemote = (s) => s.remoteFamily + s.remoteAddress + s.remotePort;
@@ -381,6 +408,8 @@ const pesarattuHandler = async (socket) => {
       commandHandler = sendBreakpoints;
     } else if (command === CONST_setBP) {
       commandHandler = setBP;
+    } else if (command === CONST_removeBP) {
+      commandHandler = removeBP;
     }
     const res = await commandHandler(req);
     return await socket.write(JSON.stringify([commandCount, res]));
