@@ -182,6 +182,9 @@ const setBP = async (data) => {
     return errHndlr(setBPErr);
   }
   debug('bp @ setBP', JSON.stringify(bp, null, 2));
+  if (!bp || !bp.locations || !bp.locations.length) {
+    return errHndlr({ err: 'not possible', instance, data });
+  }
   bp.locations = getLocationsWithUrls(instance, bp.locations);
   rememberBP(instance, bp);
   return Object.assign({ status: ST_success }, bp);
@@ -211,6 +214,9 @@ const removeBP = async (data) => {
   }
   const client = CDPInstances[instance];
   const bp = getBPByLoc(instance, data);
+  if (!bp) {
+    return errHndlr('Breakpoint not found');
+  }
   const breakpointId = bp.breakpointId;
   const [removeBPErr] = await on(
     client.Debugger.removeBreakpoint({ breakpointId })
