@@ -75,8 +75,10 @@ const RES_configSuccess =
 // araGunduResponses
 
 // globalVars
-const clients = [];
+const clients = {};
 const CDPInstances = {};
+const socketUrlsPerInstance = {};
+const breakpoints = {};
 const scriptMappings = {};
 const configPath = (
   process.argv.find((arg) => arg.startsWith(CONST_rcPath)) || ''
@@ -164,8 +166,6 @@ const sendBreakpoints = async (data) => {
 
 const addUrlToLocation = (instance, location) => {
   location.url = scriptMappings[instance][location.scriptId];
-  debug('scriptMappings @ addUrlToLocation', scriptMappings);
-  debug('location @ addUrlToLocation', location);
   return location;
 };
 
@@ -182,12 +182,55 @@ const setBP = async (data) => {
   }
   bp.locations = bp.locations.map(curry(addUrlToLocation)(instance));
   debug('bp @ setBP', JSON.stringify(bp, null, 2));
+  if (!breakpoints[instance]) {
+    breakpoints[instance] = {};
+  }
+  breakpoints[instance][bp.breakpointId] = bp;
   return Object.assign({ status: ST_success }, bp);
+};
+
+const getRemoteSocket = (url) => clients[url];
+
+const paused = async (instance, params) => {
+  if (params.hitBreakpoints) {
+    params.hitBreakpoints.map((id) => {
+      const bp = breakpoints[instance][id];
+      socketUrlsPerInstance[instance].map((url) => {
+        try {
+          const socket = getRemoteSocket(url);
+          if (socket) {
+            genericMessage(
+              socket,
+              Object.assign({ pausedBP: bp }, { instance })
+            );
+          }
+        } catch (e) {
+          debug(
+            'e , instance, params, url @ send paused message to remote url',
+            e,
+            instance,
+            params,
+            url
+          );
+        }
+      });
+    });
+  }
+};
+
+const addSocketToInstance = (soc, ins) => {
+  const remote = getSocketRemote(soc);
+  if (!socketUrlsPerInstance[ins]) {
+    socketUrlsPerInstance[ins] = [remote];
+  } else if (!socketUrlsPerInstance.includes(remote)) {
+    socketUrlsPerInstance[ins].push(remote);
+  }
 };
 
 const startDebug = async (soc, data) => {
   // if the instance is already being debugged, send an ack directly
   if (CDPInstances && CDPInstances[data.instance]) {
+    addSocketToInstance(soc, data.instance);
     return { status: ST_success, instance: data.instance };
   }
 
@@ -196,6 +239,7 @@ const startDebug = async (soc, data) => {
 
   if (options.type === CONST_nodeInspect) {
     const args = options.command.substring(CONST_node.length + 1).split(' ');
+
     const instanceLog = logPath + data.instance;
     let stdio;
     try {
@@ -219,8 +263,8 @@ const startDebug = async (soc, data) => {
     } catch (e) {
       // do nothing and the default stdio will be configged
     }
-    const spawnArgs = [CONST_node, args, { cwd: CONST_fsRoot, stdio }];
 
+    const spawnArgs = [CONST_node, args, { cwd: CONST_fsRoot, stdio }];
     const process = spawn(...spawnArgs);
     process.on('close', curry(nodeProcessEnded)(soc, data.instance));
     process.on('error', curry(processNotStarted)(soc, data.instance));
@@ -282,16 +326,21 @@ const startDebug = async (soc, data) => {
   });
 
   const [enDebugErr] = await on(client.Debugger.enable());
+  client.on('Debugger.paused', curry(paused)(data.instance));
   if (enDebugErr) {
     return errHndlr(enDebugErr);
   }
   CDPInstances[data.instance] = client;
+  addSocketToInstance(soc, data.instance);
   return { status: ST_success, instance: data.instance };
 };
 
+const getSocketRemote = (s) => s.remoteFamily + s.remoteAddress + s.remotePort;
+
 const pesarattuHandler = async (socket) => {
-  debug('connected');
-  clients.push(socket);
+  const remote = getSocketRemote(socket);
+  debug('connected @ socket ', remote);
+  clients[remote] = socket;
 
   let servings = 0;
   const waitingOrders = {};
@@ -358,8 +407,7 @@ const pesarattuHandler = async (socket) => {
 
   socket.on('close', () => {
     debug('disconnected');
-    const clientIndx = clients.indexOf(socket);
-    clients.splice(clientIndx, 1);
+    delete clients[getSocketRemote(socket)];
   });
 };
 
