@@ -72,16 +72,14 @@ const pesarattuHandler = async (socket) => {
     }
   };
   const serveOrder = async (data) => {
-    if (!data[1] || !data[1].attu) {
+    debug('data @ serverOrder', JSON.stringify(data, null, 2));
+    if (!data[1] || !data[1].command) {
       let msg = ['ex', "echo 'teehe'"];
-      if (data[1].includes('orai')) {
-        msg = 'sup?';
-      }
       return await socket.write(JSON.stringify([data[0], msg]));
     }
-    const command = data[1].attu;
-    delete data[1].attu;
-    const commandCount = data[0];
+    const command = data[1].command;
+    delete data[1].command;
+    const commandNr = data[0];
     const req = data[1];
     let commandHandler = () => {
       return sendFail(msgBadReq);
@@ -99,7 +97,7 @@ const pesarattuHandler = async (socket) => {
       commandHandler = resume;
     }
     const res = await commandHandler(req);
-    return await socket.write(JSON.stringify([commandCount, res]));
+    return await socket.write(JSON.stringify([commandNr, res]));
   };
 
   socket.on('data', async (data) => {
@@ -136,6 +134,7 @@ commandReceiver.on('closed', () => {
 });
 try {
   commandReceiver.listen(socketPort);
+  debug('__filename @ aragundu', __filename);
   debug('socketPort openned at ', socketPort);
 } catch (e) {
   debug('failed to start a listening socket at ', socketPort, '\nErr:', e);

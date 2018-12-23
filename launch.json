@@ -1,0 +1,15 @@
+{
+  "apps": [
+    {
+      "name": "aragundu",
+      "script": "/Users/srihari/.vim/plugged/pesarattu/plugin/../node_modules/aragundu/aragundu.js",
+      "cwd": "/",
+      "watch": "/Users/srihari/aragundu",
+      "args": [
+        "rcPath=/Users/srihari/.pesaratturc.js",
+        "port=8765",
+        "logPath=/Users/srihari/.aragundu.log"
+      ]
+    }
+  ]
+}

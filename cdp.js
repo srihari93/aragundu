@@ -142,7 +142,8 @@ const startDebug = async (soc, data) => {
   // if the instance is already being debugged, send an ack directly
   if (CDPInstances && CDPInstances[instance]) {
     addSocketToInstance(soc, instance);
-    return sendSuccess(instance);
+    debug('instance @ location', JSON.stringify(instance, null, 2));
+    return sendSuccess({ instance });
   }
 
   const options = config.instances[instance];
@@ -234,7 +235,7 @@ const startDebug = async (soc, data) => {
   if (!breakpoints[instance]) {
     breakpoints[instance] = {};
   }
-  return sendSuccess(instance);
+  return sendSuccess({ instance });
 };
 module.exports = {
   startDebug,
